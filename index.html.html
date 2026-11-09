@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>스마트 원격감지기 대시보드</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif;background:#f3f4f6;color:#111}
+.wrap{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center}
+.conn{font-size:12px;font-weight:400;color:#6b7280}
+.card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px}
+.status{text-align:center;color:#fff;font-size:26px;font-weight:700;padding:22px 16px;transition:background .3s}
+.status small{display:block;font-size:13px;font-weight:400;opacity:.9;margin-top:4px}
+.s0{background:#16a34a}.s1{background:#f59e0b}.s2{background:#ea580c}.s3{background:#dc2626}.soff{background:#6b7280}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lbl{font-size:12px;color:#6b7280}
+.val{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.sub{font-size:13px;color:#374151;margin-top:8px}
+canvas{width:100%;display:block}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+button{border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:600;background:#1f2937;color:#fff;cursor:pointer}
+button.alt{background:#e5e7eb;color:#111}
+ul{list-style:none;margin:8px 0 0;padding:0}
+li{display:flex;justify-content:space-between;font-size:14px;padding:6px 0;border-top:1px solid #f0f0f0}
+li b{color:#dc2626}
+.setup input{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;margin:8px 0}
+.foot{font-size:12px;color:#6b7280;text-align:center}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>스마트 원격감지기 <span class="conn" id="conn">연결 중…</span></h1>
+
+<div class="card setup hide" id="setup">
+  <div class="lbl">Firebase Realtime Database 주소를 넣어주세요 (한 번만)</div>
+  <input id="urlIn" placeholder="https://프로젝트-default-rtdb.asia-southeast1.firebasedatabase.app">
+  <button id="urlSave" style="width:100%">저장</button>
+  <div id="urlErr" class="lbl" style="color:#dc2626;margin-top:6px"></div>
+</div>
+
+<div class="card status soff" id="st"><span id="stt">-</span><small id="stsub"></small></div>
+<div class="card"><canvas id="lv" height="220"></canvas></div>
+<div class="card">
+  <div class="grid">
+    <div><div class="lbl">ΔX (영점 기준)</div><div class="val" id="dx">-</div></div>
+    <div><div class="lbl">ΔY (영점 기준)</div><div class="val" id="dy">-</div></div>
+  </div>
+  <div class="sub">현재 X <b id="x">-</b>° · Y <b id="y">-</b>° · 합성 기울기 <b id="m">-</b>°</div>
+</div>
+<div class="card"><div class="lbl">최근 2분 변화</div><canvas id="ch" height="160"></canvas></div>
+<div class="btns"><button id="bz">영점 설정</button><button class="alt" id="bt">감지 OFF</button></div>
+<div class="card"><div class="lbl">위험 기록 (최근 10건)</div><ul id="ev"><li>기록 없음</li></ul></div>
+<p class="foot">합성 기울기 √(ΔX²+ΔY²) 기준 · 정상 1.0° 미만 · 위험 1.0° 이상 5초 지속<br>
+<a href="#" id="reset" style="color:#6b7280">데이터베이스 주소 바꾸기</a></p>
+</div>
+
+<script>
+// 주소를 여기에 직접 넣어도 돼요 (비워두면 화면에서 입력)
+let DB_URL = "https://smart-remote-sensor-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+const H = [], N = 120, $ = id => document.getElementById(id);
+const NAMES = ['정상', '주의', '위험 확인 중', '위험'];
+const COLORS = ['#16a34a', '#f59e0b', '#ea580c', '#dc2626'];
+let timer = null, evTimer = null;
+
+function loadUrl() {
+  if (!DB_URL) { try { DB_URL = localStorage.getItem('tiltDbUrl') || ''; } catch (e) {} }
+  DB_URL = DB_URL.trim().replace(/\/+$/, '');
+  return DB_URL;
+}
+
+function fit(c) {
+  const r = window.devicePixelRatio || 1, w = c.clientWidth, h = +(c.dataset.h||(c.dataset.h=c.getAttribute('height')));
+  c.width = w * r; c.height = h * r; c.style.height = h + 'px';
+  const g = c.getContext('2d'); g.setTransform(r, 0, 0, r, 0, 0); return [g, w, h];
+}
+
+function drawLevel(dx, dy, lvl) {
+  const [g, w, h] = fit($('lv'));
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 10, S = R / 2;  // 원 끝 = 2°
+  g.clearRect(0, 0, w, h); g.lineWidth = 1;
+  g.strokeStyle = '#d1d5db'; g.beginPath(); g.arc(cx, cy, R, 0, 7); g.stroke();
+  g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+  g.setLineDash([4, 4]);
+  g.strokeStyle = '#dc2626'; g.beginPath(); g.arc(cx, cy, S, 0, 7); g.stroke();
+  g.setLineDash([]);
+  let px = dx * S, py = -dy * S; const d = Math.hypot(px, py);
+  if (d > R - 10) { px *= (R - 10) / d; py *= (R - 10) / d; }
+  g.fillStyle = COLORS[lvl] || '#6b7280'; g.beginPath(); g.arc(cx + px, cy + py, 10, 0, 7); g.fill();
+  g.fillStyle = '#6b7280'; g.font = '11px sans-serif';
+  g.fillText('1.0°', cx + S + 3, cy - 4);
+  g.fillText('X', cx + R - 10, cy + 14); g.fillText('Y', cx + 6, cy - R + 10);
+}
+
+function drawChart() {
+  const [g, w, h] = fit($('ch')); g.clearRect(0, 0, w, h);
+  const M = 2, yv = v => h / 2 - Math.max(-M, Math.min(M, v)) / M * (h / 2 - 6);
+  g.lineWidth = 1; g.setLineDash([4, 4]);
+  [[1, '#dc2626'], [-1, '#dc2626']].forEach(([v, c]) => {
+    g.strokeStyle = c; g.beginPath(); g.moveTo(0, yv(v)); g.lineTo(w, yv(v)); g.stroke();
+  });
+  g.setLineDash([]); g.strokeStyle = '#e5e7eb'; g.beginPath(); g.moveTo(0, yv(0)); g.lineTo(w, yv(0)); g.stroke();
+  g.lineWidth = 2;
+  [['dx', '#2563eb'], ['dy', '#9333ea']].forEach(([k, c]) => {
+    g.strokeStyle = c; g.beginPath();
+    H.forEach((p, i) => { const x = i / (N - 1) * w; i ? g.lineTo(x, yv(p[k])) : g.moveTo(x, yv(p[k])); });
+    g.stroke();
+  });
+  g.font = '11px sans-serif'; g.fillStyle = '#2563eb'; g.fillText('ΔX', 6, 12); g.fillStyle = '#9333ea'; g.fillText('ΔY', 30, 12);
+}
+
+function setConn(text, color) { $('conn').textContent = '● ' + text; $('conn').style.color = color; }
+
+async function poll() {
+  try {
+    const r = await fetch(DB_URL + '/tilt/current.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('http ' + r.status);
+    const d = await r.json();
+    if (!d) { setConn('아직 데이터 없음', '#f59e0b'); return; }
+    const age = (Date.now() - (d.t || 0)) / 1000;
+    const online = age < 6;
+    setConn(online ? '실시간' : '기기 응답 없음 (' + Math.round(age) + '초 전)', online ? '#16a34a' : '#dc2626');
+
+    const f = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '°';
+    $('dx').textContent = f(d.dx); $('dy').textContent = f(d.dy);
+    $('x').textContent = d.x.toFixed(2); $('y').textContent = d.y.toFixed(2); $('m').textContent = d.m.toFixed(2);
+
+    let cls, txt, sub = '';
+    if (!online) { cls = 'soff'; txt = '기기 연결 끊김'; sub = 'ESP32 전원과 핫스팟을 확인하세요'; }
+    else if (!d.mpu) { cls = 'soff'; txt = '센서 확인 필요'; sub = 'GY-521 연결을 확인하세요'; }
+    else if (!d.en) { cls = 'soff'; txt = '감지 OFF'; sub = '감지 ON을 누르면 다시 시작해요'; }
+    else {
+      cls = 's' + d.level; txt = NAMES[d.level];
+      sub = d.level === 3 ? '경보 울리는 중' : d.level === 2 ? '1.0° 초과 · 5초 지속 확인 중' : '합성 기울기 ' + d.m.toFixed(2) + '°';
+    }
+    $('st').className = 'card status ' + cls; $('stt').textContent = txt; $('stsub').textContent = sub;
+    $('bt').textContent = d.en ? '감지 OFF' : '감지 ON';
+
+    if (online) { H.push({ dx: d.dx, dy: d.dy }); if (H.length > N) H.shift(); }
+    drawLevel(d.dx, d.dy, (online && d.en && d.mpu) ? d.level : -1);
+    drawChart();
+  } catch (e) {
+    setConn('주소 또는 인터넷 확인', '#dc2626');
+  }
+}
+
+async function loadEvents() {
+  try {
+    const r = await fetch(DB_URL + '/tilt/events.json?orderBy="$key"&limitToLast=10', { cache: 'no-store' });
+    const d = await r.json();
+    const list = d ? Object.values(d).sort((a, b) => b.t - a.t) : [];
+    $('ev').innerHTML = list.length ? '' : '<li>기록 없음</li>';
+    list.forEach(e => {
+      const li = document.createElement('li');
+      const when = new Date(e.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      li.innerHTML = '<span></span><b></b>';
+      li.firstChild.textContent = when;
+      li.lastChild.textContent = '최대 ' + Number(e.m).toFixed(2) + '°';
+      $('ev').appendChild(li);
+    });
+  } catch (e) {}
+}
+
+async function sendCmd(key) {
+  try {
+    await fetch(DB_URL + '/tilt/cmd/' + key + '.json', { method: 'PUT', body: '1' });
+    setConn('명령 보냄 (2초 안에 반영)', '#2563eb');
+  } catch (e) { setConn('명령 전송 실패', '#dc2626'); }
+}
+
+function start() {
+  if (!loadUrl()) { $('setup').classList.remove('hide'); return; }
+  $('setup').classList.add('hide');
+  clearInterval(timer); clearInterval(evTimer);
+  poll(); loadEvents();
+  timer = setInterval(poll, 1000);
+  evTimer = setInterval(loadEvents, 5000);
+}
+
+$('urlSave').onclick = () => {
+  const v = $('urlIn').value.trim();
+  if (!/^https:\/\/.+(firebasedatabase\.app|firebaseio\.com)\/?$/.test(v)) {
+    $('urlErr').textContent = 'https://로 시작하는 Realtime Database 주소를 넣어주세요.'; return;
+  }
+  $('urlErr').textContent = '';
+  DB_URL = v;
+  try { localStorage.setItem('tiltDbUrl', v.replace(/\/+$/, '')); } catch (e) {}
+  start();
+};
+$('urlIn').oninput = () => { $('urlErr').textContent = ''; };
+$('reset').onclick = e => {
+  e.preventDefault(); DB_URL = '';
+  try { localStorage.removeItem('tiltDbUrl'); } catch (err) {}
+  clearInterval(timer); clearInterval(evTimer);
+  $('setup').classList.remove('hide');
+};
+$('bz').onclick = () => { if (confirm('지금 자세를 영점으로 설정할까요?')) { sendCmd('zero'); H.length = 0; } };
+$('bt').onclick = () => sendCmd('toggle');
+
+start();
+</script>
+</body>
+</html>
