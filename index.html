@@ -28,6 +28,17 @@ li b{color:#dc2626}
 .setup input{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;margin:8px 0}
 .foot{font-size:12px;color:#6b7280;text-align:center}
 .hide{display:none}
+.bat{display:flex;align-items:center;gap:10px;font-size:14px}
+.bbar{flex:1;height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden}
+.bfill{height:100%;width:0;background:#16a34a;transition:width .5s}
+.dir{display:block;font-size:17px;font-weight:600;margin-top:6px}
+button.on{background:#16a34a}
+.alarmbtn{width:100%;margin-bottom:12px}
+.missed{background:#fee2e2;color:#991b1b;border:2px solid #dc2626;font-weight:600;text-align:center;cursor:pointer}
+.subbtn{width:100%;margin-bottom:6px;background:#2563eb}
+.subhelp{font-size:13px;line-height:1.6}
+.subhelp a{color:#2563eb}
+.hint{font-size:12px;color:#6b7280;text-align:center;margin:-6px 0 12px}
 </style>
 </head>
 <body>
@@ -41,7 +52,14 @@ li b{color:#dc2626}
   <div id="urlErr" class="lbl" style="color:#dc2626;margin-top:6px"></div>
 </div>
 
-<div class="card status soff" id="st"><span id="stt">-</span><small id="stsub"></small></div>
+<div class="card status soff" id="st"><span id="stt">-</span><span class="dir" id="stdir"></span><small id="stsub"></small></div>
+<div class="card missed hide" id="missed"></div>
+<button class="alarmbtn" id="alarm">🔔 경보음 · 화면 켜짐 유지 켜기</button>
+<div class="hint" id="alarmHint">운전석에 거치할 때 한 번 눌러 주세요</div>
+<button class="subbtn" id="sub">📲 다른 화면에서도 위험 알림 받기</button>
+<div class="hint" id="subHint">처음 한 번만 · 알림 앱(ntfy)으로 연결돼요</div>
+<div class="card subhelp hide" id="subHelp"><b>알림 앱이 안 열리면</b><br>① 알림 앱 설치: <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank">안드로이드</a> · <a href="https://apps.apple.com/us/app/ntfy/id1625396347" target="_blank">아이폰</a><br>② 설치 후 위 파란 버튼을 다시 누르기 (안드로이드)<br>③ 아이폰은 앱에서 <b>+</b> 를 누르고 채널 이름 붙여넣기 → <button class="alt" id="copyTopic" style="padding:6px 10px;font-size:13px">채널 이름 복사</button></div>
+<div class="card bat"><span>배터리</span><div class="bbar"><div class="bfill" id="bfill"></div></div><b id="bp">-</b><span class="lbl" id="bv"></span></div>
 <div class="card"><canvas id="lv" height="220"></canvas></div>
 <div class="card">
   <div class="grid">
@@ -53,7 +71,7 @@ li b{color:#dc2626}
 <div class="card"><div class="lbl">최근 2분 변화</div><canvas id="ch" height="160"></canvas></div>
 <div class="btns"><button id="bz">영점 설정</button><button class="alt" id="bt">감지 OFF</button></div>
 <div class="card"><div class="lbl">위험 기록 (최근 10건)</div><ul id="ev"><li>기록 없음</li></ul></div>
-<p class="foot">합성 기울기 √(ΔX²+ΔY²) 기준 · 정상 1.0° 미만 · 위험 1.0° 이상 5초 지속<br>
+<p class="foot">합성 기울기 √(ΔX²+ΔY²) 기준 · 정상 0.5° 미만 · 사전 알림 0.5~1.0° · 위험 1.0° 이상 5초 또는 3° 이상 1초<br>방향은 원 그래프 기준 (위쪽 = 앞 = Y+, 오른쪽 = X+)<br>
 <a href="#" id="reset" style="color:#6b7280">데이터베이스 주소 바꾸기</a></p>
 </div>
 
@@ -62,7 +80,7 @@ li b{color:#dc2626}
 let DB_URL = "https://smart-remote-sensor-default-rtdb.asia-southeast1.firebasedatabase.app";
 
 const H = [], N = 120, $ = id => document.getElementById(id);
-const NAMES = ['정상', '주의', '위험 확인 중', '위험'];
+const NAMES = ['정상', '사전 알림', '위험 확인 중', '위험'];
 const COLORS = ['#16a34a', '#f59e0b', '#ea580c', '#dc2626'];
 let timer = null, evTimer = null;
 
@@ -112,6 +130,99 @@ function drawChart() {
   g.font = '11px sans-serif'; g.fillStyle = '#2563eb'; g.fillText('ΔX', 6, 12); g.fillStyle = '#9333ea'; g.fillText('ΔY', 30, 12);
 }
 
+// ---- 휴대폰 알림 구독 (ntfy) : 대시보드에서 한 번에 ----
+const NTFY_TOPIC = "smart_tilt_kjh_lt3m8j1svc";
+$('sub').onclick = () => {
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) {
+    location.href = 'ntfy://ntfy.sh/' + NTFY_TOPIC + '?display=' + encodeURIComponent('스마트 원격감지기');
+    setTimeout(() => { if (document.visibilityState === 'visible') $('subHelp').classList.remove('hide'); }, 1500);
+  } else {
+    $('subHelp').classList.remove('hide');
+  }
+};
+$('copyTopic').onclick = async () => {
+  try { await navigator.clipboard.writeText(NTFY_TOPIC); $('copyTopic').textContent = '복사됨 ✓'; }
+  catch (e) { prompt('채널 이름을 길게 눌러 복사하세요', NTFY_TOPIC); }
+};
+
+// ---- 기운 방향 (원 그래프와 같은 기준: 위 = 앞(Y+), 오른쪽 = X+) ----
+function dirText(dx, dy, m) {
+  if (m < 0.3) return '수평 유지 중';
+  const a = Math.atan2(dy, dx) * 180 / Math.PI;           // 0 = 오른쪽, 90 = 앞
+  const names = ['오른쪽', '오른쪽 · 앞', '앞', '왼쪽 · 앞', '왼쪽', '왼쪽 · 뒤', '뒤', '오른쪽 · 뒤'];
+  const i = ((Math.round(a / 45) % 8) + 8) % 8;
+  return names[i] + (names[i].endsWith('뒤') ? '로 ' : '으로 ') + m.toFixed(2) + '° 기울어짐';
+}
+
+// ---- 경보음 · 진동 · 화면 켜짐 유지 ----
+let alarmOn = false, actx = null, wakeLock = null, lostCount = 0;
+function beep(freq, ms, delay) {
+  if (!actx) return;
+  const t = actx.currentTime + (delay || 0) / 1000;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'square'; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.25, t); g.gain.setValueAtTime(0, t + ms / 1000);
+  o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + ms / 1000 + 0.02);
+}
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && alarmOn && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (e) {}
+}
+function showAlarmState() {
+  $('alarm').classList.toggle('on', alarmOn);
+  $('alarm').textContent = alarmOn ? '🔔 경보음 · 화면 유지 켜짐 (누르면 끄기)' : '🔔 경보음 · 화면 켜짐 유지 켜기';
+  const noWake = !('wakeLock' in navigator);
+  $('alarmHint').textContent = alarmOn
+    ? (noWake ? '이 휴대폰은 화면 유지를 지원하지 않아요 · 설정에서 화면 꺼짐 시간을 늘려 주세요' : '위험이면 소리 · 진동으로 알려요 · 이 화면을 켜 둔 채로 두세요')
+    : '운전석에 거치할 때 한 번 눌러 주세요';
+}
+$('alarm').onclick = async () => {
+  alarmOn = !alarmOn;
+  if (alarmOn) {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); await actx.resume(); } catch (e) {}
+    beep(1800, 120);                      // 켜졌다는 확인음
+    await keepAwake();
+  } else {
+    try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(0);
+  }
+  showAlarmState();
+};
+// 전화 등으로 화면을 벗어났다가 돌아오면: 소리 다시 켜기 + 화면 유지 다시 + 그동안 생긴 위험 알려주기
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (alarmOn && actx) { try { await actx.resume(); } catch (e) {} }
+  await keepAwake();
+  poll();
+  if (!hiddenAt) return;
+  try {
+    const r = await fetch(DB_URL + '/tilt/events.json?orderBy="$key"&limitToLast=10', { cache: 'no-store' });
+    const d = await r.json();
+    const miss = d ? Object.values(d).filter(e => e.t >= hiddenAt - 2000) : [];
+    if (miss.length) {
+      const mx = Math.max(...miss.map(e => Number(e.m)));
+      const mins = Math.max(1, Math.round((Date.now() - hiddenAt) / 60000));
+      $('missed').textContent = '⚠ 화면을 벗어난 ' + mins + '분 동안 위험 경보 ' + miss.length + '건 (최대 ' + mx.toFixed(2) + '°) · 눌러서 닫기';
+      $('missed').classList.remove('hide');
+      if (alarmOn) { beep(2000, 150); beep(2000, 150, 300); beep(2000, 150, 600); if (navigator.vibrate) navigator.vibrate([400, 150, 400]); }
+    }
+  } catch (e) {}
+  loadEvents();
+});
+$('missed').onclick = () => $('missed').classList.add('hide');
+function alarmTick(state) {           // 1초마다 poll()에서 호출
+  if (!alarmOn) return;
+  if (state === 'danger') {
+    beep(2000, 150); beep(2000, 150, 300);
+    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+  }
+  if (state === 'lost') {                // 연결 끊김: 5초마다 낮은 소리 한 번
+    if (lostCount++ % 5 === 0) { beep(600, 300); if (navigator.vibrate) navigator.vibrate(200); }
+  } else lostCount = 0;
+}
+
 function setConn(text, color) { $('conn').textContent = '● ' + text; $('conn').style.color = color; }
 
 async function poll() {
@@ -134,16 +245,26 @@ async function poll() {
     else if (!d.en) { cls = 'soff'; txt = '감지 OFF'; sub = '감지 ON을 누르면 다시 시작해요'; }
     else {
       cls = 's' + d.level; txt = NAMES[d.level];
-      sub = d.level === 3 ? '경보 울리는 중' : d.level === 2 ? '1.0° 초과 · 5초 지속 확인 중' : '합성 기울기 ' + d.m.toFixed(2) + '°';
+      sub = d.level === 3 ? '경보 울리는 중' : d.level === 2 ? '1.0° 넘음 · 5초 확인 중 (3° 넘으면 1초)' : d.level === 1 ? '수평 허용 한계(0.57°) 근처 · 확인하세요' : '';
     }
     $('st').className = 'card status ' + cls; $('stt').textContent = txt; $('stsub').textContent = sub;
+    $('stdir').textContent = (online && d.mpu && d.en) ? dirText(d.dx, d.dy, d.m) : '';
+    alarmTick(!online ? 'lost' : (d.mpu && d.en && d.level === 3) ? 'danger' : 'ok');
     $('bt').textContent = d.en ? '감지 OFF' : '감지 ON';
+
+    if (typeof d.bp === 'number' && d.bp >= 0) {
+      const c = d.bp <= 20 ? '#dc2626' : d.bp <= 40 ? '#f59e0b' : '#16a34a';
+      $('bfill').style.width = d.bp + '%'; $('bfill').style.background = c;
+      $('bp').textContent = d.bp + '%'; $('bp').style.color = c;
+      $('bv').textContent = d.bv.toFixed(2) + ' V';
+    } else { $('bfill').style.width = '0'; $('bp').textContent = '-'; $('bv').textContent = '측정 안 됨'; }
 
     if (online) { H.push({ dx: d.dx, dy: d.dy }); if (H.length > N) H.shift(); }
     drawLevel(d.dx, d.dy, (online && d.en && d.mpu) ? d.level : -1);
     drawChart();
   } catch (e) {
     setConn('주소 또는 인터넷 확인', '#dc2626');
+    alarmTick('lost');
   }
 }
 
